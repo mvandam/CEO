@@ -128,21 +128,23 @@ class GMT_MX(GmtMirrors):
 
     Parameters
     ----------
-    D : float
-        The size of the pupil plane in meter
-    D_px : int
-        The size of the pupil plane in pixel
-    M1_radial_order : int, optionnal
+    M1_radial_order : int, optional
         The largest radial order of the Zernike polynomials on M1 segments, default to 0
-    M2_radial_order : int, optionnal
+    M2_radial_order : int, optional
         The largest radial order of the Zernike polynomials on M2 segments, default to 0
+    M1_mirror_modes : unicode, optional
+        The modal basis on the M1 segments either ""zernike"" or ""bending modes"", default: ""zernike""
+    M1_N_MODE : int, optional
+        The number of modes, default: 0
+    M2_mirror_modes : unicode, optional
+        The modal basis on the M2 segments either ""zernike"" or "Karhunen-Loeve" (https://s3-us-west-1.amazonaws.com/gmto.rconan/KarhunenLoeveModes.bin), default: ""zernike""
+    M2_N_MODE : int, optional
+        The number of modes, default: 0
+    M1_clear_aperture_diameter: float, optional
+        M1 clear aperture diameter, default: 8.365m
 
     Attributes
     ----------
-    D : float
-        The size of the pupil plane in meter
-    D_px : int
-        The size of the pupil plane in pixel
     M1 : GMT_M1
         The GMT M1 CEO class
     M2 : GMT_M2
@@ -186,10 +188,11 @@ class GMT_MX(GmtMirrors):
 
     >>> gpu_ps1d = src.wavefront.phase()
     """
-    def __init__(self, D=None, D_px=None, M1_radial_order=0, M2_radial_order=0,
+    def __init__(self, M1_radial_order=0, M2_radial_order=0,
                  M1_mirror_modes=u"zernike", M2_mirror_modes=u"zernike",
                  M1_N_MODE=0 ,M2_N_MODE=0,
-                 M1_mirror_modes_data=None, M2_mirror_modes_data=None):
+                 M1_mirror_modes_data=None, M2_mirror_modes_data=None,
+                 M1_clear_aperture_diameter=8.365):
 
         if type(M2_mirror_modes) is dict:
         
@@ -321,11 +324,12 @@ class GMT_MX(GmtMirrors):
                             M1_N_MODE=M1_N_MODE,
                             M2_N_MODE=M2_N_MODE,
                             M1_mirror_modes_data=M1_mirror_modes_data,
-                            M2_mirror_modes_data=M2_mirror_modes_data)
+                            M2_mirror_modes_data=M2_mirror_modes_data,
+                            M1_clear_aperture_diameter=M1_clear_aperture_diameter)
 
     def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None, first_mode=3, 
                   closed_loop_calib=False, minus_M2_TT=False,
-                  calibrationVaultKwargs=None, stroke_scaling=False):
+                  calibrationVaultKwargs=None, stroke_scaling=False, last_mode=None):
         """
         Calibrate the different degrees of freedom of the  mirrors
 
@@ -498,7 +502,10 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="zernike":
-                n_mode = self.M1.zernike.n_mode
+                if last_mode is None:
+                    n_mode = self.M1.zernike.n_mode
+                else:
+                    n_mode = last_mode
                 D = np.zeros((wfs.get_measurement_size(),(n_mode-first_mode)*7))
                 idx = 0
                 for kSeg in range(7):
@@ -603,7 +610,10 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="zernike":
-                n_mode = self.M2.zernike.n_mode
+                if last_mode is None:
+                    n_mode = self.M2.zernike.n_mode
+                else:
+                    n_mode = last_mode 
                 D = np.zeros((wfs.get_measurement_size(),(n_mode-first_mode)*7))
                 idx = 0
                 for kSeg in range(7):
@@ -614,7 +624,10 @@ class GMT_MX(GmtMirrors):
                         idx += 1
                     sys.stdout.write("\n")
             if mode=="Karhunen-Loeve":
-                n_mode = self.M2.modes.n_mode
+                if last_mode is None:
+                    n_mode = self.M2.modes.n_mode
+                else:
+                    n_mode = last_mode
                 D = np.zeros((wfs.get_measurement_size(),(n_mode-first_mode)*7))
                 idx = 0;
                 if stroke_scaling == True:

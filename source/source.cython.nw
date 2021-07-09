@@ -64,7 +64,7 @@ cdef extern from "source.h":
 					 float , int )
         void get_vignetting(double *)
         void gmt_truss_onaxis()
-        void gmt_m2_baffle()
+        void gmt_m2_baffle(double)
     # static routines
 	void get_n_iteration(int *)
 @
@@ -340,8 +340,8 @@ def ee80(self,spaxel="circle"):
 
 def gmt_truss_onaxis(self):
     self._c_bundle.gmt_truss_onaxis()
-def gmt_m2_baffle(self):
-    self._c_bundle.gmt_m2_baffle()
+def gmt_m2_baffle(self, double baffle_diameter):
+    self._c_bundle.gmt_m2_baffle(0.5*baffle_diameter)
 
 property N_BUNDLE:
     def __get__(self):
@@ -467,6 +467,7 @@ property L:
         void masked(mask *)
         void masked()
         void add_phase(float , float *)
+        void add_same_phase(float , float *)
         void rms(float *)
 	void finite_difference(float *, float *, int, float);
         void finite_difference(float *, float *, int, float, mask *);
@@ -581,6 +582,8 @@ cdef class Complex_amplitude:
 
     def axpy(self, float alpha, cuFloatArray phase):
         self._c_complex_amplitude.add_phase(alpha,phase._c_gpu.dev_data)        
+    def axpy_same(self, float alpha, cuFloatArray phase):
+        self._c_complex_amplitude.add_same_phase(alpha,phase._c_gpu.dev_data)        
 
     def __iadd__(self, x):
         cdef cuFloatArray data
@@ -684,6 +687,18 @@ cdef class Complex_amplitude:
         self._c_complex_amplitude.gradient_average(&sxy[0], &sxy[self._c_complex_amplitude.N],  d)
         return np.asarray(sxy)
 @
+
+\section{Photometry}
+\label{sec:photometry}
+
+\index{source!python!photometry}
+
+<<source.pxd contents>>=
+    ctypedef struct photometry:
+        float wavelength
+        float zero_point
+        float spectral_bandwidth;
+@
 \section{Source}
 \label{sec:source}
 
@@ -697,6 +712,7 @@ cdef class Complex_amplitude:
         int N_SRC
         const char *photometric_band
         float fwhm, magnitude
+        photometry x_band
         float2 *d__otf
         complex_amplitude wavefront
         bundle rays
@@ -743,6 +759,7 @@ cdef class Source:
         public double samplingTime, timeStamp
         public dict parameters
         public bytes band
+        photometry x_band
 @
 \subsection{PYX file}
 \label{sec:pyx-file-2}
@@ -754,8 +771,8 @@ cdef class Source:
 
     Parameters
     ----------
-    photometric_band : char
-        The sources photometric band
+    photometric_band : char or list
+        The sources photometric band or a 3 element list: [wavelength[m], spectral_bandwidth[m], zero_point[ph/m^2/s]],
     zenith : list, tuple or numpy array, optional
         The sources zenith angles [rd], defaults to 0.
     azimuth :  list, tuple or numpy array, optional
@@ -774,6 +791,8 @@ cdef class Source:
          A 3 element list, with the first 2 being the (x,y) origin of the ray bundle and the 3rd the ray bundle starting z coordinates, defaults to [0,0,25]
     samplingTime : double
         the source propagation sampling time; default: 1s
+    rays_rot_angle: float, optional
+        The pupil rotation angle [rd], default: 0rd
 
     Attributes
     ----------
@@ -866,7 +885,8 @@ cdef class Source:
                  chief_ray_origin=None,
                  samplingTime = 1.0,
                  int N_RAY=0,
-                 double[:] rays_x=None, double[:] rays_y=None):
+                 double[:] rays_x=None, double[:] rays_y=None,
+                 rays_rot_angle = None, **kwargs):
 
         cdef float[:] z,a
         if rays_box_sampling is not None:
@@ -881,7 +901,14 @@ cdef class Source:
             self._magnitude_ = np.array( magnitude, dtype=np.float32, ndmin=1)
         self.height  = float(height);
         self.size = self._zenith_.size
-        self.band = <bytes>photometric_band.encode()
+        if isinstance(photometric_band,list):
+            self.band = b"X"
+            self.x_band.wavelength = <float> photometric_band[0]
+            self.x_band.spectral_bandwidth = <float> photometric_band[1]
+            self.x_band.zero_point = <float> photometric_band[2]
+            self._c_source.x_band = self.x_band
+        else:
+            self.band = <bytes>photometric_band.encode()
         cdef vector _origin_, _chief_origin_
         if N_RAY>0:
             _origin_.x = <float>rays_origin[0]
@@ -940,6 +967,8 @@ cdef class Source:
         self.sphere_distance = None
         self.samplingTime = samplingTime
         self.timeStamp = 0.0
+        if rays_rot_angle is not None:
+            self.rays.rot_angle = rays_rot_angle
 
     def __dealloc__(self):
         self._c_source.cleanup()
@@ -1293,6 +1322,8 @@ class JSource(JSONAbstract,Source):
         void otf(source *)
         float eval()
         float eval(float *)
+        float oeval()
+        float oeval(float *)
 @
 \subsubsection{Class definition}
 \label{sec:class-definition-pssn}
@@ -1347,6 +1378,13 @@ cdef class PSSn:
         cdef float[:] results
         results = np.zeros(self._c_pssn.N,dtype=np.single)
         self._c_pssn.eval(&results[0])
+        return np.asarray(results)
+    def oeval(self):
+        return self._c_pssn.oeval()
+    def oevals(self):
+        cdef float[:] results
+        results = np.zeros(self._c_pssn.N,dtype=np.single)
+        self._c_pssn.oeval(&results[0])
         return np.asarray(results)
     @property
     def N_O(self):
